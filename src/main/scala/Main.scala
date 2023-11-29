@@ -2,123 +2,120 @@ import scala.io.Source
 import scala.io.Source._
 import scala.io.StdIn.readLine
 import scala.util.{Try, Using, Success, Failure}
+import scala.annotation.tailrec
 
 
-enum TokenType:
-  // Single-character tokens.
-  case LEFT_PAREN, RIGHT_PAREN, LEFT_BRACE, RIGHT_BRACE,
-   COMMA, DOT, MINUS, PLUS, SEMICOLON, SLASH, STAR,
+import cats.parse.{Parser => P, Parser0, Numbers}
+import cats.parse.Rfc5234.{sp, alpha, digit}
 
-  // One or two character tokens.
-   BANG, BANG_EQUAL, EQUAL, EQUAL_EQUAL, GREATER, GREATER_EQUAL, LESS, LESS_EQUAL,
-
-  // Literals.
-   IDENTIFIER, STRING, NUMBER,
-
-  // Keywords.
-  AND, CLASS, ELSE, FALSE, FUN, FOR, IF, NIL, OR,
-       PRINT, RETURN, SUPER, THIS, TRUE, VAR, WHILE, EOF
-
-
-class Token(token_type: TokenType = TokenType.WHILE, lexeme: String = "", literal: Object = null, line: Int = 0):
-  override def toString(): String = 
-    s"$token_type $lexeme $literal $line"
-
-class Scanner(val Source: String):
-  var tokens: List[Token] = List()
-
-  var start: Int = 0
-  var current: Int = 0
-  var line: Int = 1
-
-  def isAtEnd(): Boolean = current >= Source.length
-  def scan_token(): Unit =
-    val c = advance()
-    c match
-      case '(' => add_token(TokenType.LEFT_PAREN)
-      case ')' => add_token(TokenType.RIGHT_PAREN)
-      case '{' => add_token(TokenType.LEFT_BRACE)
-      case '}' => add_token(TokenType.RIGHT_BRACE)
-      case ',' => add_token(TokenType.COMMA)
-      case '.' => add_token(TokenType.DOT)
-      case '-' => add_token(TokenType.MINUS)
-      case '+' => add_token(TokenType.PLUS)
-      case ';' => add_token(TokenType.SEMICOLON)
-      case '*' => add_token(TokenType.STAR)
-      case '!' => add_token(if match_next('=') then TokenType.BANG_EQUAL else TokenType.BANG)
-      case '=' => add_token(if match_next('=') then TokenType.EQUAL_EQUAL else TokenType.EQUAL)
-      case '<' => add_token(if match_next('=') then TokenType.LESS_EQUAL else TokenType.LESS)
-      case '>' => add_token(if match_next('=') then TokenType.GREATER_EQUAL else TokenType.GREATER)
-      case '/' => if match_next('/') then
-        while peek() != '\n' && !isAtEnd() do advance()
-        else add_token(TokenType.SLASH)
-      case ' ' | '\r' | '\t' => ()
-      case '\n' => line += 1
-      case '"' => string()
-      case _ => error(line, "Unexpected character.")
+def error(line: Int, message: String): Unit =
+ report(line, "", message)
   
-  def number(): Unit =
-    while isdigit(peek()) do advance()
-    // Look for a fractional part.
-    if peek() == '.' && isdigit(peekNext()) then
-      // Consume the "."
-      advance()
-      while isdigit(peek()) do advance()
-    add_token(TokenType.NUMBER, Source.substring(start, current))
-      
-  def scan_tokens(): List[Token] = 
-    while !isAtEnd() do
-      // We are at the beginning of the next lexeme.
-      start = current
-      scan_token()
-    tokens = tokens :+ Token(TokenType.EOF, "", null, line)
-    tokens
+def report(line: Int, where: String, message: String): Unit =
+  println(s"[line $line] Error $where: $message")
 
-  def match_next(expected: Char): Boolean =
-    if isAtEnd() then return false
-    if Source.charAt(current) != expected then return false
-    current += 1
-    true
-  
-  def string(): Unit = 
-    while peek() != '"' && !isAtEnd() do
-      if peek() == '\n' then line += 1
-      advance()
-    // Unterminated string.
-    if isAtEnd() then
-      error(line, "Unterminated string.")
-      return
-    // The closing ".
-    advance()
-    // Trim the surrounding quotes.
-    val value = Source.substring(start + 1, current - 1)
-    add_token(TokenType.STRING, value)
-  
-  def isdigit(c: Char): Boolean = c >= '0' && c <= '9'
+object Lexer:
+  sealed trait Token
 
-  def peek(): Char = 
-    if isAtEnd() then '\u0000'
-    else Source.charAt(current)
+  case class NumberToken(value: Int) extends Token
+  case class IdentifierToken(name: String) extends Token
+  case object PlusToken extends Token
+  case object MinusToken extends Token
+  case object StarToken extends Token
+  case object SlashToken extends Token
+  case object LeftParenToken extends Token
+  case object RightParenToken extends Token
+  case object EqualsToken extends Token
+  case object BangToken extends Token
+  case object BangEqualsToken extends Token
+  case object EqualsEqualsToken extends Token
+  case object GreaterToken extends Token
+  case object GreaterEqualsToken extends Token
+  case object LessToken extends Token
+  case object LessEqualsToken extends Token
+  case object AndToken extends Token
+  case object OrToken extends Token
+  case object TrueToken extends Token
+  case object FalseToken extends Token
+  case object NilToken extends Token
+  case object VarToken extends Token
+  case object PrintToken extends Token
+  case object IfToken extends Token
+  case object ElseToken extends Token
+  case object WhileToken extends Token
+  case object ForToken extends Token
+  case object EOFToken extends Token
 
-  def peekNext(): Char =
-    if current + 1 >= Source.length then '\u0000'
-    else Source.charAt(current + 1)
-  
-  def advance(): Char =  
-    current += 1
-    Source.charAt(current - 1)
 
-  def add_token(token_type: TokenType): Unit =
-    add_token(token_type, null)
-    
-  def add_token(token_type: TokenType, literal: Object): Unit =
-    val text = Source.substring(start, current)
-    tokens = tokens :+ Token(token_type, text, literal, line)
   
+  val intParser: P[Token] = Numbers.signedIntString.map(s => NumberToken(s.toInt))
+  val identifierParser: P[Token] = (alpha ~ (alpha | digit).rep0).string.map(IdentifierToken.apply)
+
+  val whitespaces: Parser0[Unit] = P.charIn(" \t\r\n").void.rep0.void
+
+  def lexeme[A](p: P[A]): P[A] = p <* whitespaces
+  
+  val keywords: List[String] = List("and", "class", "else", "false", "for", "fun", "if", "nil", "or", "print", "return", "this", "true", "var", "while")
+  keywords.map(P.string(_) ~ P.charIn(" \t\r\n(").void)
+
+  //def keyword_parser(keyword: String): P[Token] = P.string(keyword) <* P.charIn(" \t\r\n(").void
+
+  val simple_parsers: List[P[Token]] = List(
+    P.char('+').as(PlusToken),
+    P.char('-').as(MinusToken),
+    P.char('*').as(StarToken),
+    P.char('/').as(SlashToken),
+    P.char('(').as(LeftParenToken),
+    P.char(')').as(RightParenToken),
+    P.string("==").as(EqualsEqualsToken),
+    P.char('=').as(EqualsToken),
+    P.string("!=").as(BangEqualsToken),
+    P.char('!').as(BangToken),
+  
+    P.string(">=").as(GreaterEqualsToken),
+    P.char('>').as(GreaterToken),
+    P.string("<=").as(LessEqualsToken),
+    P.char('<').as(LessToken),
+  
+    P.string("&&").as(AndToken),
+    P.string("||").as(OrToken)
+  )
+//<* P.charIn(" \t\r\n(")).backtrack
+  def keyword(s: String): P[Unit] = {
+  (P.string(s) ~ (P.charIn(" \t\r\n.;,") | P.end)).void.backtrack
+}
+  val keyword_parsers: List[P[Token]] = List(
+    keyword("for").as(ForToken),
+    keyword("true").as(TrueToken),
+    keyword("false").as(FalseToken),
+    keyword("nil").as(NilToken),
+    keyword("var").as(VarToken),
+    keyword("print").as(PrintToken),
+    keyword("if").as(IfToken),
+    keyword("else").as(ElseToken),
+    keyword("while").as(WhileToken)
+  )
+  def keyword_helper[A](p: P[A]): P[A] = p <* P.charIn(" \t\r\n(").void.backtrack
+  
+
+
+  val tokenParser: P[Token] = P.oneOf(
+    (simple_parsers ++ keyword_parsers :+ intParser :+ identifierParser).map(lexeme)
+    //P.end.as(EOFToken) 
+  )
+
+  def tokenize(input: String): Either[P.Error, List[Token]] = tokenParser.rep0.parseAll(input)
+
+object Parser:
+  sealed trait Expr
+  case class Binary(left: Expr, operator: Lexer.Token, right: Expr) extends Expr
+  case class Unary(operator: Lexer.Token, right: Expr) extends Expr
+  case class Literal(value: Int) extends Expr
+  case class Grouping(expression: Expr) extends Expr
+  
+
 def readFileAsString(filePath: String): Option[String] =
-  Try {
-    Using(Source.fromFile(filePath))(_.mkString).get
-  }.toOption
+  Try(Using(Source.fromFile(filePath))(_.mkString).get).toOption
 
 @main def main(script: String*): Unit =
   script match
@@ -127,33 +124,28 @@ def readFileAsString(filePath: String): Option[String] =
       case Some(source) => run_file(source)
       case None => println("File not found!")
     case _ => println("Too many arguments!")
-    
+
 def run_repl(): Unit = 
   println("Running REPL")
+  val result = Lexer.tokenize("42 + x")
+  println(result)
   while true do
-    val line = readLine("> ")
+    val line = readLine("Grouse> ")
     if line == null || line == "exit" then 
       println("All done!")
       return None
-    run(line)
-    println(line)
-  None
+    execute(line) match
+      case Success(_) => ()
+      case Failure(e) => println(e.getMessage)
 
-def run(source: String): Option[String] =
-  val scanner = Scanner(source)
-  val tokens = scanner.scan_tokens();
-  tokens.foreach(println)
-  None
+def execute(source: String): Try[String] =
+  val tokens = Lexer.tokenize(source)
+  tokens match
+    case Left(err) => println(err)
+    case Right(tokens) => println(tokens)
+  Failure(new Exception("Not implemented"))
 
 
 def run_file(source: String): Try[String] =
-  run(source)
+  execute(source)
   Success("Success")
-
-
-def error(line: Int, message: String): Unit =
- report(line, "", message)
-  
-def report(line: Int, where: String, message: String): Unit =
-  println(s"[line $line] Error $where: $message")
-  None  

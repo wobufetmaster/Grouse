@@ -1,3 +1,5 @@
+import Lexer.*
+import cats.parse.Parser
 // For more information on writing tests, see
 // https://scalameta.org/munit/docs/getting-started.html
 class MySuite extends munit.FunSuite {
@@ -9,9 +11,31 @@ class MySuite extends munit.FunSuite {
 }
 
 class MainSpec extends munit.FunSuite {
-  test("Scanner should return the source string") {
-    val source = "Hello, World!"
-    val scanner = new Scanner(source)
-    assert(scanner.Source == source)
+  test("Plus parser") {
+    assertEquals(Lexer.plusParser.parseAll("+"), Right(PlusToken))
   }
+
+
+  test("Minus parser") {
+    assertEquals(Lexer.minusParser.parseAll("-"), Right(MinusToken))
+  }
+}
+
+
+class IdentifierLexerTest extends munit.FunSuite {
+
+  test("identifierParser should parse valid identifier tokens") {
+    val input = "abc123"
+    val expected = IdentifierToken("abc123")
+    val result = identifierParser.parse(input)
+    assert(result.successful)
+    assert(result.get == expected)
+  }
+
+  test("identifierParser should fail to parse invalid identifier tokens") {
+    val input = "123abc"
+    val result = identifierParser.parse(input)
+    assert(result.failure)
+  }
+
 }
