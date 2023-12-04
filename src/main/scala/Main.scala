@@ -8,17 +8,12 @@ import scala.annotation.tailrec
 import cats.parse.{Parser => P, Parser0, Numbers}
 import cats.parse.Rfc5234.{sp, alpha, digit}
 
-def error(line: Int, message: String): Unit =
- report(line, "", message)
-  
-def report(line: Int, where: String, message: String): Unit =
-  println(s"[line $line] Error $where: $message")
-
 object Lexer:
   sealed trait Token
 
   case class NumberToken(value: Int) extends Token
   case class IdentifierToken(name: String) extends Token
+  case class StringToken(value: String) extends Token
   case object PlusToken extends Token
   case object MinusToken extends Token
   case object StarToken extends Token
@@ -38,29 +33,40 @@ object Lexer:
   case object TrueToken extends Token
   case object FalseToken extends Token
   case object NilToken extends Token
-  case object VarToken extends Token
+  case object ValToken extends Token
   case object PrintToken extends Token
   case object IfToken extends Token
   case object ElseToken extends Token
   case object WhileToken extends Token
   case object ForToken extends Token
+  case object PipeToken extends Token
+  case object ComposeToken extends Token
+  case object ConsToken extends Token
+  case object WalrusToken extends Token
+  case object LeftArrowToken extends Token
+  case object RightArrowToken extends Token
+  case object QuoteToken extends Token
+  case object LeftBraceToken extends Token
+  case object RightBraceToken extends Token
+  case object RangeToken extends Token
   case object EOFToken extends Token
 
-
-  
   val intParser: P[Token] = Numbers.signedIntString.map(s => NumberToken(s.toInt))
   val identifierParser: P[Token] = (alpha ~ (alpha | digit).rep0).string.map(IdentifierToken.apply)
+  val stringParser: P[Token] = (P.char('"') *> P.charsWhile(_ != '"').string <* P.char('"')).map(StringToken.apply)
 
   val whitespaces: Parser0[Unit] = P.charIn(" \t\r\n").void.rep0.void
-
   def lexeme[A](p: P[A]): P[A] = p <* whitespaces
   
-  val keywords: List[String] = List("and", "class", "else", "false", "for", "fun", "if", "nil", "or", "print", "return", "this", "true", "var", "while")
-  keywords.map(P.string(_) ~ P.charIn(" \t\r\n(").void)
-
-  //def keyword_parser(keyword: String): P[Token] = P.string(keyword) <* P.charIn(" \t\r\n(").void
-
   val simple_parsers: List[P[Token]] = List(
+    P.string("->").as(RightArrowToken),
+    P.string("<-").as(LeftArrowToken),
+    P.string("::").as(ConsToken),
+    P.string(":=").as(WalrusToken),
+    P.string("||").as(OrToken),
+    P.string("|>").as(ComposeToken),
+    P.string("..").as(RangeToken),
+    P.char('|').as(PipeToken),
     P.char('+').as(PlusToken),
     P.char('-').as(MinusToken),
     P.char('*').as(StarToken),
@@ -71,36 +77,31 @@ object Lexer:
     P.char('=').as(EqualsToken),
     P.string("!=").as(BangEqualsToken),
     P.char('!').as(BangToken),
-  
     P.string(">=").as(GreaterEqualsToken),
     P.char('>').as(GreaterToken),
     P.string("<=").as(LessEqualsToken),
     P.char('<').as(LessToken),
-  
     P.string("&&").as(AndToken),
-    P.string("||").as(OrToken)
+    P.char('{').as(LeftBraceToken),
+    P.char('}').as(RightBraceToken),
   )
-//<* P.charIn(" \t\r\n(")).backtrack
-  def keyword(s: String): P[Unit] = {
-  (P.string(s) ~ (P.charIn(" \t\r\n.;,") | P.end)).void.backtrack
-}
+
+  def keyword(s: String): P[Unit] = (P.string(s) ~ P.peek((P.charIn(" \t\r\n.;,({})") | P.end))).void.backtrack
+
   val keyword_parsers: List[P[Token]] = List(
     keyword("for").as(ForToken),
     keyword("true").as(TrueToken),
     keyword("false").as(FalseToken),
     keyword("nil").as(NilToken),
-    keyword("var").as(VarToken),
+    keyword("val").as(ValToken),
     keyword("print").as(PrintToken),
     keyword("if").as(IfToken),
     keyword("else").as(ElseToken),
     keyword("while").as(WhileToken)
   )
-  def keyword_helper[A](p: P[A]): P[A] = p <* P.charIn(" \t\r\n(").void.backtrack
-  
-
 
   val tokenParser: P[Token] = P.oneOf(
-    (simple_parsers ++ keyword_parsers :+ intParser :+ identifierParser).map(lexeme)
+    (simple_parsers ++ keyword_parsers :+ stringParser :+ intParser :+ identifierParser).map(lexeme) 
     //P.end.as(EOFToken) 
   )
 
@@ -112,7 +113,7 @@ object Parser:
   case class Unary(operator: Lexer.Token, right: Expr) extends Expr
   case class Literal(value: Int) extends Expr
   case class Grouping(expression: Expr) extends Expr
-  
+
 
 def readFileAsString(filePath: String): Option[String] =
   Try(Using(Source.fromFile(filePath))(_.mkString).get).toOption
@@ -127,8 +128,6 @@ def readFileAsString(filePath: String): Option[String] =
 
 def run_repl(): Unit = 
   println("Running REPL")
-  val result = Lexer.tokenize("42 + x")
-  println(result)
   while true do
     val line = readLine("Grouse> ")
     if line == null || line == "exit" then 
