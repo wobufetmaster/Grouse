@@ -10,4 +10,5 @@ lazy val root = project
 
     libraryDependencies += "org.scalameta" %% "munit" % "0.7.29" % Test,
     libraryDependencies += "org.typelevel" %% "cats-parse" % "0.3.9",
+    libraryDependencies += "org.scala-lang.modules" %% "scala-parser-combinators" % "2.3.0",
   )
